@@ -1,0 +1,171 @@
+---
+title: "Analysis of the climatic events that impacts health and economy of the EUA."
+author: "Marco Pollo Almeida"
+date: "2/11/2020"
+---
+        
+
+## 1. Outline
+This project involves exploring the U.S. National Oceanic and Atmospheric 
+Administration's (NOAA) storm database. Storms and other severe weather 
+events can cause both public health and economic problems for communities 
+and municipalities. To prevent such outcomes to the extent possible is a 
+key concern. The dataset presents the 1950 to 2011 period.
+
+Based on the documentation of the dataset [here](https://d396qusza40orc.cloudfront.net/repdata%2Fpeer2_doc%2Fpd01016005curr.pdf), one investigates the main events which cause harm to Health (injuries and fatalities) and Economic Field (properties and crops).
+
+
+## 2. Data Processing
+
+### 2.1. Data Loading
+
+Following steps: Downloading the dataset (raw data). Extract it from bzip2 file. Read and convert it into a "data.table" object.
+```{r}
+# Load packages that will be used
+library(data.table)
+library(tidyverse)
+
+# Download and extract the file
+URL <- "https://d396qusza40orc.cloudfront.net/repdata%2Fdata%2FStormData.csv.bz2"
+download.file(URL, destfile = paste0("~/", '/repdata%2Fdata%2FStormData.csv.bz2'))
+
+# read the data
+dt <- read.csv("~/repdata%2Fdata%2FStormData.csv.bz2")
+
+# Transform to "data.table" object
+dt <- as.data.table(dt)
+```
+
+### 2.2. Inspecting variables (name, type, class, etc.)
+
+```{r}
+str(dt)
+```
+
+### 2.3. Create new dataset from the raw data (subsetting).
+
+Create new dataset based on the requirements of the project.
+```{r results="hide"}
+# Variables to remove
+rmVarb <- colnames(dt[, !c("EVTYPE", "FATALITIES", "INJURIES", "PROPDMG", "PROPDMGEXP", "CROPDMG", "CROPDMGEXP")])
+
+# Removing variables
+dt[, c(rmVarb) := NULL]
+
+# Filtering data only with fatalities or injuries  
+dt <- dt[(EVTYPE != "?" & (INJURIES > 0 | FATALITIES > 0 | PROPDMG > 0 | CROPDMG > 0)), c("EVTYPE", "FATALITIES", "INJURIES", "PROPDMG", "PROPDMGEXP", "CROPDMG", "CROPDMGEXP") ]
+```
+
+### 2.4. Transforming some characters according to documentation, in order to make possible the calculations.
+
+Clean the PROPDMGEXP and CROPDMGEXP variables in order to calculate some results related to cost crop and properties.
+```{r results="hide"}
+# Change some characters to uppercase.
+cols <- c("PROPDMGEXP", "CROPDMGEXP")
+dt[,  (cols) := c(lapply(.SD, toupper)), .SDcols = cols]
+# Change alphanumeric exponents to numeric values (for PROPERTY variable).
+propDmgKey <-  c("\"\"" = 10^0,
+                 "-" = 10^0, 
+                 "+" = 10^0,
+                 "0" = 10^0,
+                 "1" = 10^1,
+                 "2" = 10^2,
+                 "3" = 10^3,
+                 "4" = 10^4,
+                 "5" = 10^5,
+                 "6" = 10^6,
+                 "7" = 10^7,
+                 "8" = 10^8,
+                 "9" = 10^9,
+                 "H" = 10^2,
+                 "K" = 10^3,
+                 "M" = 10^6,
+                 "B" = 10^9)
+# Change alphanumeric exponents to numeric values.
+cropDmgKey <-  c("\"\"" = 10^0,
+                "?" = 10^0, 
+                "0" = 10^0,
+                "K" = 10^3,
+                "M" = 10^6,
+                "B" = 10^9)
+dt[, PROPDMGEXP := propDmgKey[as.character(dt[,PROPDMGEXP])]]
+dt[is.na(PROPDMGEXP), PROPDMGEXP := 10^0 ]
+dt[, CROPDMGEXP := cropDmgKey[as.character(dt[,CROPDMGEXP])] ]
+dt[is.na(CROPDMGEXP), CROPDMGEXP := 10^0 ]
+```
+
+### 2.5. Creating Economic Cost Variables
+
+```{r}
+dt <- dt[, .(EVTYPE, FATALITIES, INJURIES, PROPDMG, PROPDMGEXP, propCost = PROPDMG * PROPDMGEXP, CROPDMG, CROPDMGEXP, cropCost = CROPDMG * CROPDMGEXP)]
+```
+
+### 2.6. Creating Total Property and Crop Cost Variables
+
+```{r}
+dt2 <- dt[, .(propCost = sum(propCost), cropCost = sum(cropCost), Total_Cost = sum(propCost) + sum(cropCost)), by = .(EVTYPE)]
+dt2 <- dt2[order(-Total_Cost), ]
+dt2 <- dt2[1:10, ]
+head(dt2, 5)
+```
+
+### 2.7. Creating Total Fatalities and Injuries Variables
+
+```{r}
+dt3 <- dt[, .(FATALITIES = sum(FATALITIES), INJURIES = sum(INJURIES), totals = sum(FATALITIES) + sum(INJURIES)), by = .(EVTYPE)]
+dt3 <- dt3[order(-FATALITIES), ]
+dt3 <- dt3[1:10, ]
+head(dt3, 5)
+```
+
+## 3. Results
+
+### 3.1. Events that are Most Harmful to Population Health
+
+Melting data.table so that it is easier to put in bar graph format 
+```{r }
+dt4 <- melt(dt3, id.vars="EVTYPE", variable.name = "bad_thing")
+head(dt4, 5)
+```
+
+```{r}
+# Create chart
+healthChart <- ggplot(dt4, aes(x=reorder(EVTYPE, -value), y=value))
+# Plot data as bar chart
+healthChart = healthChart + geom_bar(stat="identity", aes(fill=bad_thing), position="dodge")
+# Format y-axis scale and set y-axis label
+healthChart = healthChart + ylab("Frequency Count") 
+# Set x-axis label
+healthChart = healthChart + xlab("Event Type") 
+# Rotate x-axis tick labels 
+healthChart = healthChart + theme(axis.text.x = element_text(angle=45, hjust=1))
+# Set chart title and center it
+healthChart = healthChart + ggtitle("Top 10 US Killers") + theme(plot.title = element_text(hjust = 0.5))
+healthChart
+```
+
+### 3.2. Events that have the Greatest Economic Consequences
+
+Melting data.table so that it is easier to put in bar graph format 
+```{r }
+dt5 <- melt(dt2, id.vars="EVTYPE", variable.name = "Damage_Type")
+head(dt5, 5)
+```
+
+```{r }
+# Create chart
+econChart <- ggplot(dt5, aes(x=reorder(EVTYPE, -value), y=value))
+# Plot data as bar chart
+econChart = econChart + geom_bar(stat="identity", aes(fill=Damage_Type), position="dodge")
+# Format y-axis scale and set y-axis label
+econChart = econChart + ylab("Cost (dollars)") 
+# Set x-axis label
+econChart = econChart + xlab("Event Type") 
+# Rotate x-axis tick labels 
+econChart = econChart + theme(axis.text.x = element_text(angle=45, hjust=1))
+# Set chart title and center it
+econChart = econChart + ggtitle("Top 10 US Storm Events causing Economic Consequences") + theme(plot.title = element_text(hjust = 0.5))
+econChart
+```
+
+
